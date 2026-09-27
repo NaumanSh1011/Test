@@ -30,7 +30,6 @@ on:
           build/soong build/make build/blueprint build/bazel build/release
           prebuilts/build-tools prebuilts/clang/host/linux-x86 prebuilts/go/linux-x86
           prebuilts/jdk/jdk21 prebuilts/sdk prebuilts/misc prebuilts/rust prebuilts/clang-tools
-          prebuilts/runtime
           prebuilts/vndk/v30 prebuilts/vndk/v31 prebuilts/vndk/v32 prebuilts/vndk/v33 prebuilts/vndk/v34
           toolchain/pgo-profiles
           bionic system/core system/libbase system/logging system/tools/aidl system/libfmq
@@ -168,15 +167,15 @@ jobs:
           source build/envsetup.sh
           # Don't mask the real cause — lunch failures here are usually a missing config-time project
           # (rbcrun/starlark, product configs). The actual error prints above this line.
-          # Use banchan (unbundled single-module build) instead of a full `lunch`. A full product
-          # lunch makes Soong run GenerateBuildActions for the WHOLE product — dragging in the
-          # filesystem generator, compliance, and the VINTF compatibility matrices, which panic on a
-          # partial tree. banchan limits the build graph to our target + its deps, so those never run.
-          # (Module TYPES are still parsed globally, hence we still sync the hidl/xsdc/aidl plugins.)
-          echo "=== banchan $TARGET arm64 userdebug (unbundled; skips whole-product analysis) ==="
-          export TARGET_RELEASE=trunk_staging
-          if ! banchan "$TARGET" arm64 userdebug; then
-            echo "::error::banchan setup failed — see the error just above"
+          # Soong analyzes every PARSED module when generating the ninja graph (not just our target's
+          # deps), so partial-tree analysis errors are handled two ways: sync the projects our target
+          # needs, and PRUNE (below/earlier) the product modules that panic but we don't build.
+          # NOTE: banchan/module_arm64 was tried and is worse here — it additionally analyzes module-SDK
+          # export modules (e.g. runtime-module-host-exports) that panic. The plain phone product does
+          # not, so we use lunch.
+          echo "=== lunch ${{ inputs.lunch_target }} ==="
+          if ! lunch "${{ inputs.lunch_target }}"; then
+            echo "::error::lunch/config failed — see the error just above (often a missing project to add to 'projects', or a module to add to PRUNE)"
             exit 3
           fi
           set -u
