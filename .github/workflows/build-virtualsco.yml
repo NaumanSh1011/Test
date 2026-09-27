@@ -38,7 +38,7 @@ on:
           external/googletest external/fmtlib external/jsoncpp external/tinyxml2 external/expat
           external/libcxx external/libcxxabi external/compiler-rt external/zlib external/boringssl
           external/libcap external/pcre external/selinux external/jemalloc_new external/lzma
-          external/python external/go-cmp external/golang-protobuf
+          external/go-cmp external/golang-protobuf external/starlark-go
       sync_jobs:
         description: "repo sync parallelism"
         required: false
@@ -118,13 +118,17 @@ jobs:
           # instead of killing the run. Combined with SOONG_ALLOW_MISSING_DEPENDENCIES, anything
           # genuinely unneeded just stays absent. `repo sync` accepts a project PATH or name.
           REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
-          OK=""; SKIP=""
+          N="$(printf '%s\n' $REQ | grep -c .)"
+          i=0; OK=""; SKIP=""
           for p in $REQ; do
+            i=$((i+1))
+            echo "==> [$i/$N] syncing $p"
             if repo sync -c --no-clone-bundle --optimized-fetch --force-sync \
                  -j"${{ inputs.sync_jobs }}" "$p" 2>/tmp/syncerr; then
+              echo "    ok: $p"
               OK="$OK $p"
             else
-              echo "::warning::skipping $p — $(tr '\n' ' ' < /tmp/syncerr | tail -c 200)"
+              echo "::warning::[$i/$N] skipping $p — $(tr '\n' ' ' < /tmp/syncerr | tail -c 200)"
               SKIP="$SKIP $p"
             fi
           done
@@ -148,7 +152,12 @@ jobs:
           export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
           set +u
           source build/envsetup.sh
-          lunch "${{ inputs.lunch_target }}" || { echo "::error::lunch '${{ inputs.lunch_target }}' invalid for this branch"; exit 3; }
+          # Don't mask the real cause — lunch failures here are usually a missing config-time project
+          # (rbcrun/starlark, product configs). The actual error prints above this line.
+          if ! lunch "${{ inputs.lunch_target }}"; then
+            echo "::error::lunch/config failed — see the error just above (often a missing project to add to 'projects')"
+            exit 3
+          fi
           set -u
           m "$TARGET"
           df -h "$AOSP_ROOT"
