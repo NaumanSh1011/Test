@@ -47,6 +47,11 @@ on:
 permissions:
   contents: read
 
+# One build at a time; a new run cancels any in-progress one (so a re-trigger supersedes a stuck run).
+concurrency:
+  group: build-virtualsco
+  cancel-in-progress: true
+
 env:
   AOSP_ROOT: /mnt/aosp
   MODULE_DEST_REL: vendor/aicaller/virtualsco
