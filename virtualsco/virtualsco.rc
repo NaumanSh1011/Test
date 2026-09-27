@@ -1,0 +1,8 @@
+# Launches the virtual SCO AIDL audio module service. class hal + user audio mirror how the primary
+# audio HAL service is started, so it comes up early enough for AudioPolicyManager to enumerate it.
+service vendor.audio-hal-aidl-virtualsco /vendor/bin/hw/android.hardware.audio.service-aidl.virtualsco
+    class hal
+    user audioserver
+    group audio
+    capabilities BLOCK_SUSPEND
+    task_profiles ProcessCapacityHigh HighPerformance

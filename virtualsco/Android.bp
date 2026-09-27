@@ -1,0 +1,29 @@
+// Standalone vendor service registering android.hardware.audio.core.IModule/virtual.
+//
+// Drop this directory into your AOSP/BSP tree (e.g. vendor/aicaller/virtualsco or
+// hardware/interfaces/audio/aidl/virtualsco) and build:
+//     m android.hardware.audio.service-aidl.virtualsco
+//
+// It reuses AOSP's complete default audio HAL implementation (libaudioserviceexampleimpl) and its
+// service defaults (aidlaudioservice_defaults), both from hardware/interfaces/audio/aidl/default,
+// so the only new code is the virtual BT-SCO configuration + a tiny main. Building against the
+// tree's own android.hardware.audio.core-V*-ndk is what makes this version-correct without us
+// pinning a version by hand.
+
+cc_binary {
+    name: "android.hardware.audio.service-aidl.virtualsco",
+    relative_install_path: "hw",
+    vendor: true,
+    // aidlaudioservice_defaults pulls in libbinder_ndk, libfmq, libaudioaidlcommon, the
+    // audio.core / audio.common / media.audio.common NDK stubs, etc.
+    defaults: ["aidlaudioservice_defaults"],
+    static_libs: [
+        "libaudioserviceexampleimpl",
+    ],
+    srcs: [
+        "VirtualScoConfiguration.cpp",
+        "main_virtual.cpp",
+    ],
+    init_rc: ["virtualsco.rc"],
+    vintf_fragments: ["virtualsco.xml"],
+}

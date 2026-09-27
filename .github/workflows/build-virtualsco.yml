@@ -1,0 +1,162 @@
+name: Build virtual SCO AIDL module (free runner)
+
+# Builds virtualsco/ (the android.hardware.audio.core IModule/virtual service) on a standard
+# GitHub-hosted Ubuntu runner, tuned to stay inside the ~70 GB disk bracket:
+#   - builds on /mnt (the runner's large scratch disk), not the cramped /
+#   - frees the preinstalled toolchains first
+#   - CURATED sync: repo init (metadata only) then `repo sync` ONLY the listed projects
+#   - SOONG_ALLOW_MISSING_DEPENDENCIES=true so Soong tolerates everything outside the target's path
+#   - caches .repo + out so first-run tuning iterations are cheap
+#
+# FIRST-RUN TUNING: if the build errors "module \"X\" not found / no such file", find the git
+# project that provides X, add it to the `projects` input, and re-run. After ~1-2 passes the list is
+# complete; keep it as your default. This is the one-time cost of the free path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      aosp_branch:
+        description: "AOSP manifest branch/tag (match the target device's Android version)"
+        required: true
+        default: "android-15.0.0_r36"
+      lunch_target:
+        description: "lunch target"
+        required: true
+        default: "aosp_arm64-trunk_staging-userdebug"
+      projects:
+        description: "Space/newline-separated repo projects to sync (curated). Extend on missing-module errors."
+        required: true
+        default: >-
+          build/soong build/make build/blueprint build/bazel build/release
+          prebuilts/build-tools prebuilts/clang/host/linux-x86 prebuilts/go/linux-x86
+          prebuilts/jdk/jdk21 prebuilts/sdk prebuilts/misc prebuilts/rust prebuilts/clang-tools
+          prebuilts/vndk prebuilts/runtime
+          bionic system/core system/libbase system/logging system/tools/aidl system/libfmq
+          system/memory/libmemunreachable system/unwinding system/sepolicy
+          hardware/interfaces hardware/libhardware hardware/libhardware_legacy
+          frameworks/native frameworks/av
+          external/googletest external/fmtlib external/jsoncpp external/tinyxml2 external/expat
+          external/libcxx external/libcxxabi external/compiler-rt external/zlib external/boringssl
+          external/libcap external/pcre external/selinux external/jemalloc_new external/lzma
+          external/python external/go-cmp external/golang-protobuf
+      sync_jobs:
+        description: "repo sync parallelism"
+        required: false
+        default: "6"
+
+permissions:
+  contents: read
+
+env:
+  AOSP_ROOT: /mnt/aosp
+  MODULE_DEST_REL: vendor/aicaller/virtualsco
+  TARGET: android.hardware.audio.service-aidl.virtualsco
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Check out this repo (has virtualsco/)
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: false
+
+      - name: Prepare /mnt build area
+        run: |
+          sudo mkdir -p "$AOSP_ROOT"
+          sudo chown "$USER" "$AOSP_ROOT"
+          df -h / /mnt
+
+      - name: Install AOSP build dependencies + repo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git-core gnupg flex bison build-essential zip curl zlib1g-dev \
+            libc6-dev-i386 lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
+            fontconfig python3 python-is-python3 rsync
+          mkdir -p "$HOME/bin"
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          git config --global color.ui false
+
+      - name: Cache .repo and out (speeds up retries)
+        uses: actions/cache@v4
+        with:
+          path: |
+            /mnt/aosp/.repo
+            /mnt/aosp/out
+          key: aosp-${{ inputs.aosp_branch }}-${{ hashFiles('.github/workflows/build-virtualsco.yml') }}
+          restore-keys: |
+            aosp-${{ inputs.aosp_branch }}-
+
+      - name: Curated sync (metadata + only the listed projects)
+        run: |
+          cd "$AOSP_ROOT"
+          repo init -u https://android.googlesource.com/platform/manifest \
+            -b "${{ inputs.aosp_branch }}" --partial-clone --depth=1 --no-tags
+          # Normalize the projects input (newlines/extra spaces -> single-spaced) and sync only those.
+          PROJECTS="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
+          echo "Syncing curated projects: $PROJECTS"
+          repo sync -c --no-clone-bundle --optimized-fetch --prune -j"${{ inputs.sync_jobs }}" $PROJECTS
+          df -h /mnt
+
+      - name: Stage virtualsco module into the tree
+        run: |
+          DEST="$AOSP_ROOT/$MODULE_DEST_REL"
+          mkdir -p "$DEST"
+          rsync -a --delete "$GITHUB_WORKSPACE/virtualsco/" "$DEST/"
+          ls -R "$DEST"
+
+      - name: Build the module (tolerating missing unrelated projects)
+        run: |
+          cd "$AOSP_ROOT"
+          export OUT_DIR="$AOSP_ROOT/out"
+          export SOONG_ALLOW_MISSING_DEPENDENCIES=true
+          export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
+          set +u
+          source build/envsetup.sh
+          lunch "${{ inputs.lunch_target }}" || { echo "::error::lunch '${{ inputs.lunch_target }}' invalid for this branch"; exit 3; }
+          set -u
+          m "$TARGET"
+          df -h /mnt
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          OUT="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$OUT"
+          BIN="$(find "$AOSP_ROOT/out" -type f -name "$TARGET" -path '*/vendor/bin/hw/*' 2>/dev/null | head -1)"
+          if [ -n "$BIN" ]; then cp -f "$BIN" "$OUT"/; fi
+          cp -f "$GITHUB_WORKSPACE/virtualsco/virtualsco.rc" "$GITHUB_WORKSPACE/virtualsco/virtualsco.xml" "$OUT"/ 2>/dev/null || true
+          {
+            echo "target: $TARGET"
+            echo "branch: ${{ inputs.aosp_branch }}"
+            echo "lunch: ${{ inputs.lunch_target }}"
+            echo "binary: ${BIN:-NOT FOUND}"
+            [ -n "$BIN" ] && { echo -n "arch: "; readelf -h "$BIN" 2>/dev/null | sed -n 's/.*Machine:  *//p'; }
+            [ -n "$BIN" ] && { echo -n "size: "; du -h "$BIN" | cut -f1; }
+            echo "built: $(date -u +%FT%TZ)"
+          } > "$OUT/build-info.txt"
+          cat "$OUT/build-info.txt"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtualsco-aidl-${{ inputs.aosp_branch }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

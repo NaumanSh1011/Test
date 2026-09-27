@@ -1,0 +1,2 @@
+# Label the service binary so init launches it in the hal_audio_virtualsco domain.
+/vendor/bin/hw/android\.hardware\.audio\.service-aidl\.virtualsco    u:object_r:hal_audio_virtualsco_exec:s0

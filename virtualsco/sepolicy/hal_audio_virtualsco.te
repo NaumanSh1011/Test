@@ -1,0 +1,19 @@
+# SELinux domain for the virtual SCO AIDL audio module service.
+#
+# It is given the standard hal_audio SERVER role, which grants exactly what the vendor's own audio
+# HAL has: register android.hardware.audio.core.IModule with servicemanager and be bound by
+# audioserver (the audio policy/flinger client). That is all the ENUMERATION SPIKE needs.
+#
+# When we add the socket-backed streams (va_server/va_ring), extend this with the abstract-socket
+# rules mirroring native/hal's sepolicy.rule:
+#     allow hal_audio_virtualsco self:unix_stream_socket { create bind listen accept read write };
+#     allow priv_app hal_audio_virtualsco:unix_stream_socket connectto;
+# (priv_app being the AICaller app that bridges to LiveKit.)
+
+type hal_audio_virtualsco, domain;
+type hal_audio_virtualsco_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(hal_audio_virtualsco)
+
+# Server side of the audio HAL: add_service for IModule + be called by audioserver, etc.
+hal_server_domain(hal_audio_virtualsco, hal_audio)

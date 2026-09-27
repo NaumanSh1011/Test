@@ -1,0 +1,4 @@
+# Label our extra IModule instance. AIDL services are matched by "<interface>/<instance>"; the
+# vendor's manifest already labels IModule/default etc. as hal_audio_service, so our /virtual
+# instance must carry the same type for audioserver to look it up.
+android.hardware.audio.core.IModule/virtual    u:object_r:hal_audio_service:s0
