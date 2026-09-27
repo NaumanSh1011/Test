@@ -40,7 +40,8 @@ on:
           external/googletest external/fmtlib external/jsoncpp external/tinyxml2 external/expat
           external/libcxx external/libcxxabi external/compiler-rt external/zlib external/boringssl
           external/libcap external/pcre external/selinux external/jemalloc_new external/lzma
-          external/go-cmp external/golang-protobuf external/starlark-go
+          external/go-cmp external/golang-protobuf external/starlark-go external/spdx-tools
+          kernel/configs
       sync_jobs:
         description: "repo sync parallelism"
         required: false
