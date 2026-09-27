@@ -75,7 +75,7 @@ jobs:
         run: |
           sudo mkdir -p "$AOSP_ROOT"
           sudo chown "$USER" "$AOSP_ROOT"
-          df -h / /mnt
+          df -h "$AOSP_ROOT"
 
       - name: Install AOSP build dependencies + repo
         run: |
@@ -102,16 +102,28 @@ jobs:
           restore-keys: |
             aosp-${{ inputs.aosp_branch }}-
 
-      - name: Curated sync (metadata + only the listed projects)
+      - name: Curated sync (metadata + only the listed projects that exist in the manifest)
         run: |
           cd "$AOSP_ROOT"
           repo init -u https://android.googlesource.com/platform/manifest \
             -b "${{ inputs.aosp_branch }}" --partial-clone --depth=1 --no-tags
-          # Normalize the projects input (newlines/extra spaces -> single-spaced) and sync only those.
-          PROJECTS="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
-          echo "Syncing curated projects: $PROJECTS"
-          repo sync -c --no-clone-bundle --optimized-fetch --prune -j"${{ inputs.sync_jobs }}" $PROJECTS
-          df -h /mnt
+          # `repo sync <list>` aborts on the FIRST name not in the manifest (project sets differ per
+          # branch). So filter the requested list against what the manifest actually declares and sync
+          # only the valid ones — unknown names are warned and skipped, not fatal. Combined with
+          # SOONG_ALLOW_MISSING_DEPENDENCIES, anything genuinely unneeded just stays absent.
+          ALL="$(repo list -p 2>/dev/null)"
+          REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
+          VALID=""
+          for p in $REQ; do
+            if printf '%s\n' "$ALL" | grep -qx "$p"; then
+              VALID="$VALID $p"
+            else
+              echo "::warning::project not in ${{ inputs.aosp_branch }} manifest, skipping: $p"
+            fi
+          done
+          echo "Syncing:$VALID"
+          repo sync -c --no-clone-bundle --optimized-fetch --prune -j"${{ inputs.sync_jobs }}" $VALID
+          df -h "$AOSP_ROOT"
 
       - name: Stage virtualsco module into the tree
         run: |
@@ -131,7 +143,7 @@ jobs:
           lunch "${{ inputs.lunch_target }}" || { echo "::error::lunch '${{ inputs.lunch_target }}' invalid for this branch"; exit 3; }
           set -u
           m "$TARGET"
-          df -h /mnt
+          df -h "$AOSP_ROOT"
 
       - name: Collect artifacts
         if: always()
