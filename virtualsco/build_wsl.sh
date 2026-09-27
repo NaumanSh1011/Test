@@ -55,11 +55,22 @@ git config --global user.email >/dev/null 2>&1 || git config --global user.email
 git config --global color.ui false
 
 # 2. Sync the full manifest (long the first time; incremental afterwards).
-say "repo init + full sync ($AOSP_BRANCH) — first run downloads ~100+ GB, be patient"
+# googlesource rate-limits high concurrency (HTTP 429), so keep sync parallelism modest and retry —
+# repo sync is resumable, so each retry continues where the last stopped.
+SYNC_JOBS="${SYNC_JOBS:-4}"
+say "repo init + full sync ($AOSP_BRANCH, -j$SYNC_JOBS) — first run downloads ~100+ GB, be patient"
 mkdir -p "$AOSP_ROOT"; cd "$AOSP_ROOT"
 repo init -u https://android.googlesource.com/platform/manifest -b "$AOSP_BRANCH" --partial-clone --depth=1 --no-tags
-repo sync -c --no-clone-bundle --optimized-fetch --force-sync --prune -j"$JOBS" \
-  || die "repo sync failed (disk/network). Free space: $(df -h "$AOSP_ROOT" | awk 'NR==2{print $4}')"
+synced=0
+for attempt in 1 2 3 4 5 6 7 8; do
+  if repo sync -c --no-clone-bundle --optimized-fetch --force-sync --prune \
+       --retry-fetches=3 -j"$SYNC_JOBS"; then
+    synced=1; break
+  fi
+  echo ">>> sync attempt $attempt failed (likely HTTP 429 rate-limit); resuming in 60s…"
+  sleep 60
+done
+[ "$synced" = 1 ] || die "repo sync still failing after retries. Lower it further: SYNC_JOBS=2 ./build_wsl.sh (it resumes)."
 echo "sync done; tree size: $(du -sh "$AOSP_ROOT" 2>/dev/null | cut -f1)"
 
 # 3. Stage the module into the tree (source only; scripts/artifacts excluded).
