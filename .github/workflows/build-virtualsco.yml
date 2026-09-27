@@ -30,7 +30,7 @@ on:
           build/soong build/make build/blueprint build/bazel build/release
           prebuilts/build-tools prebuilts/clang/host/linux-x86 prebuilts/go/linux-x86
           prebuilts/jdk/jdk21 prebuilts/sdk prebuilts/misc prebuilts/rust prebuilts/clang-tools
-          prebuilts/vndk prebuilts/runtime
+          prebuilts/runtime
           bionic system/core system/libbase system/logging system/tools/aidl system/libfmq
           system/memory/libmemunreachable system/unwinding system/sepolicy
           hardware/interfaces hardware/libhardware hardware/libhardware_legacy
@@ -97,15 +97,8 @@ jobs:
           git config --global user.email ci@example.com
           git config --global color.ui false
 
-      - name: Cache .repo and out (speeds up retries)
-        uses: actions/cache@v4
-        with:
-          path: |
-            /mnt/aosp/.repo
-            /mnt/aosp/out
-          key: aosp-${{ inputs.aosp_branch }}-${{ hashFiles('.github/workflows/build-virtualsco.yml') }}
-          restore-keys: |
-            aosp-${{ inputs.aosp_branch }}-
+      # No actions/cache: a synced AOSP subset (with multi-GB prebuilts/clang) far exceeds GitHub's
+      # 10 GB cache limit, so the save silently fails. We keep the sync fast (batch) instead.
 
       - name: Curated sync (metadata + only the listed projects that exist in the manifest)
         run: |
@@ -118,23 +111,21 @@ jobs:
           # instead of killing the run. Combined with SOONG_ALLOW_MISSING_DEPENDENCIES, anything
           # genuinely unneeded just stays absent. `repo sync` accepts a project PATH or name.
           REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
-          N="$(printf '%s\n' $REQ | grep -c .)"
-          i=0; OK=""; SKIP=""
-          for p in $REQ; do
-            i=$((i+1))
-            echo "==> [$i/$N] syncing $p"
-            if repo sync -c --no-clone-bundle --optimized-fetch --force-sync \
-                 -j"${{ inputs.sync_jobs }}" "$p" 2>/tmp/syncerr; then
-              echo "    ok: $p"
-              OK="$OK $p"
-            else
-              echo "::warning::[$i/$N] skipping $p — $(tr '\n' ' ' < /tmp/syncerr | tail -c 200)"
-              SKIP="$SKIP $p"
-            fi
-          done
-          echo "Synced:$OK"
-          echo "Skipped:$SKIP"
-          [ -n "$OK" ] || { echo "::error::no projects synced — check branch/paths"; exit 1; }
+          SYNC="repo sync -c --no-clone-bundle --optimized-fetch --force-sync -j${{ inputs.sync_jobs }}"
+          # Fast path: one parallel batch sync of the whole list (~10-15 min). It aborts if a name is
+          # not in the manifest, so if it fails we fall back to per-project (slow but skips bad names,
+          # which then show up as ::warning:: to prune from the list).
+          if $SYNC $REQ; then
+            echo "batch sync OK"
+          else
+            echo "::warning::batch sync failed — falling back to per-project (a name is likely not in this manifest)"
+            N="$(printf '%s\n' $REQ | grep -c .)"; i=0; SKIP=""
+            for p in $REQ; do
+              i=$((i+1)); echo "==> [$i/$N] $p"
+              $SYNC "$p" 2>/tmp/e || { echo "::warning::[$i/$N] skip $p — $(tr '\n' ' ' </tmp/e | tail -c 160)"; SKIP="$SKIP $p"; }
+            done
+            echo "Skipped:$SKIP"
+          fi
           df -h "$AOSP_ROOT"
 
       - name: Stage virtualsco module into the tree
