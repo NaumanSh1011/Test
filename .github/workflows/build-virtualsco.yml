@@ -31,6 +31,7 @@ on:
           prebuilts/build-tools prebuilts/clang/host/linux-x86 prebuilts/go/linux-x86
           prebuilts/jdk/jdk21 prebuilts/sdk prebuilts/misc prebuilts/rust prebuilts/clang-tools
           prebuilts/runtime
+          prebuilts/vndk/v30 prebuilts/vndk/v31 prebuilts/vndk/v32 prebuilts/vndk/v33 prebuilts/vndk/v34
           bionic system/core system/libbase system/logging system/tools/aidl system/libfmq
           system/memory/libmemunreachable system/unwinding system/sepolicy
           hardware/interfaces hardware/libhardware hardware/libhardware_legacy
@@ -111,29 +112,26 @@ jobs:
           # instead of killing the run. Combined with SOONG_ALLOW_MISSING_DEPENDENCIES, anything
           # genuinely unneeded just stays absent. `repo sync` accepts a project PATH or name.
           REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
-          N="$(printf '%s\n' $REQ | grep -c .)"
-          echo "Planning to sync $N projects:"; printf '  - %s\n' $REQ
-          SYNC="repo sync -c --no-clone-bundle --optimized-fetch --force-sync -j${{ inputs.sync_jobs }}"
-          # repo sync's progress bar doesn't render without a TTY, so the batch runs quiet. Print a
-          # heartbeat every 45s (elapsed + disk) so the log shows it's alive.
+          # Validate names against the manifest so we can list projects liberally and have unknown
+          # ones dropped — keeping ONE fast parallel batch sync (no slow per-project fallback).
+          # `repo manifest` works right after `repo init`; `repo list` does not until after a sync.
+          repo manifest 2>/dev/null > /tmp/manifest.xml || true
+          VALIDSET="$(grep -oE '(path|name)="[^"]+"' /tmp/manifest.xml | sed -E 's/^(path|name)="//; s/"$//' | sort -u)"
+          VALID=""; MISS=""
+          for p in $REQ; do
+            if printf '%s\n' "$VALIDSET" | grep -qxF "$p"; then VALID="$VALID $p"; else MISS="$MISS $p"; fi
+          done
+          [ -z "$MISS" ] || echo "::warning::not in ${{ inputs.aosp_branch }} manifest, skipping:$MISS"
+          N="$(printf '%s\n' $VALID | grep -c .)"
+          echo "Syncing $N projects:"; printf '  - %s\n' $VALID
+          [ -n "$VALID" ] || { echo "::error::no requested projects exist in the manifest"; exit 1; }
+          # repo sync's progress bar doesn't render without a TTY, so print a heartbeat for liveness.
           heartbeat() { while :; do sleep 45; echo "… sync alive: ${SECONDS}s elapsed, $(df -h --output=used,avail "$AOSP_ROOT" 2>/dev/null | tail -1)"; done; }
           heartbeat & HB=$!
-          # Fast path: one parallel batch sync (~10-15 min). It aborts if a name is not in the
-          # manifest; on failure we fall back to per-project (slow, but skips bad names as ::warning::).
-          if $SYNC $REQ; then
-            kill $HB 2>/dev/null || true
-            echo "batch sync OK in ${SECONDS}s"
-          else
-            kill $HB 2>/dev/null || true
-            echo "::warning::batch sync failed — falling back to per-project (a name is likely not in this manifest)"
-            i=0; SKIP=""
-            for p in $REQ; do
-              i=$((i+1)); echo "==> [$i/$N] $p"
-              $SYNC "$p" 2>/tmp/e || { echo "::warning::[$i/$N] skip $p — $(tr '\n' ' ' </tmp/e | tail -c 160)"; SKIP="$SKIP $p"; }
-            done
-            echo "Skipped:$SKIP"
-          fi
+          repo sync -c --no-clone-bundle --optimized-fetch --force-sync -j"${{ inputs.sync_jobs }}" $VALID; RC=$?
           kill $HB 2>/dev/null || true
+          [ $RC -eq 0 ] || { echo "::error::batch sync failed (rc=$RC) — likely a transient fetch error, re-run"; exit $RC; }
+          echo "batch sync OK in ${SECONDS}s"
           echo "=== disk after sync ==="; df -h "$AOSP_ROOT"; du -sh "$AOSP_ROOT" 2>/dev/null || true
 
       - name: Stage virtualsco module into the tree
