@@ -111,22 +111,30 @@ jobs:
           # instead of killing the run. Combined with SOONG_ALLOW_MISSING_DEPENDENCIES, anything
           # genuinely unneeded just stays absent. `repo sync` accepts a project PATH or name.
           REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
+          N="$(printf '%s\n' $REQ | grep -c .)"
+          echo "Planning to sync $N projects:"; printf '  - %s\n' $REQ
           SYNC="repo sync -c --no-clone-bundle --optimized-fetch --force-sync -j${{ inputs.sync_jobs }}"
-          # Fast path: one parallel batch sync of the whole list (~10-15 min). It aborts if a name is
-          # not in the manifest, so if it fails we fall back to per-project (slow but skips bad names,
-          # which then show up as ::warning:: to prune from the list).
+          # repo sync's progress bar doesn't render without a TTY, so the batch runs quiet. Print a
+          # heartbeat every 45s (elapsed + disk) so the log shows it's alive.
+          heartbeat() { while :; do sleep 45; echo "… sync alive: ${SECONDS}s elapsed, $(df -h --output=used,avail "$AOSP_ROOT" 2>/dev/null | tail -1)"; done; }
+          heartbeat & HB=$!
+          # Fast path: one parallel batch sync (~10-15 min). It aborts if a name is not in the
+          # manifest; on failure we fall back to per-project (slow, but skips bad names as ::warning::).
           if $SYNC $REQ; then
-            echo "batch sync OK"
+            kill $HB 2>/dev/null || true
+            echo "batch sync OK in ${SECONDS}s"
           else
+            kill $HB 2>/dev/null || true
             echo "::warning::batch sync failed — falling back to per-project (a name is likely not in this manifest)"
-            N="$(printf '%s\n' $REQ | grep -c .)"; i=0; SKIP=""
+            i=0; SKIP=""
             for p in $REQ; do
               i=$((i+1)); echo "==> [$i/$N] $p"
               $SYNC "$p" 2>/tmp/e || { echo "::warning::[$i/$N] skip $p — $(tr '\n' ' ' </tmp/e | tail -c 160)"; SKIP="$SKIP $p"; }
             done
             echo "Skipped:$SKIP"
           fi
-          df -h "$AOSP_ROOT"
+          kill $HB 2>/dev/null || true
+          echo "=== disk after sync ==="; df -h "$AOSP_ROOT"; du -sh "$AOSP_ROOT" 2>/dev/null || true
 
       - name: Stage virtualsco module into the tree
         run: |
@@ -145,13 +153,24 @@ jobs:
           source build/envsetup.sh
           # Don't mask the real cause — lunch failures here are usually a missing config-time project
           # (rbcrun/starlark, product configs). The actual error prints above this line.
+          echo "=== lunch ${{ inputs.lunch_target }} ==="
           if ! lunch "${{ inputs.lunch_target }}"; then
             echo "::error::lunch/config failed — see the error just above (often a missing project to add to 'projects')"
             exit 3
           fi
           set -u
-          m "$TARGET"
+          echo "=== building $TARGET ==="
+          echo "(Soong analysis runs first and can be quiet for several minutes; then ninja prints [n/total].)"
+          # Heartbeat for the quiet Soong-analysis phase.
+          heartbeat() { while :; do sleep 60; echo "… build alive: ${SECONDS}s elapsed, $(df -h --output=avail "$AOSP_ROOT" 2>/dev/null | tail -1) free"; done; }
+          heartbeat & HB=$!
+          set +e
+          m "$TARGET"; RC=$?
+          set -e
+          kill $HB 2>/dev/null || true
+          echo "=== m exited rc=$RC after ${SECONDS}s ==="
           df -h "$AOSP_ROOT"
+          exit $RC
 
       - name: Collect artifacts
         if: always()
