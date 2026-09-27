@@ -34,6 +34,7 @@ on:
           prebuilts/vndk/v30 prebuilts/vndk/v31 prebuilts/vndk/v32 prebuilts/vndk/v33 prebuilts/vndk/v34
           toolchain/pgo-profiles
           bionic system/core system/libbase system/logging system/tools/aidl system/libfmq
+          system/tools/hidl system/tools/xsdc
           system/memory/libmemunreachable system/unwinding system/sepolicy
           hardware/interfaces hardware/libhardware hardware/libhardware_legacy
           frameworks/native frameworks/av
