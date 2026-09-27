@@ -145,6 +145,19 @@ jobs:
           rsync -a --delete "$GITHUB_WORKSPACE/virtualsco/" "$DEST/"
           ls -R "$DEST"
 
+      - name: Prune whole-product modules that break analysis on a partial tree
+        run: |
+          # Soong runs GenerateBuildActions for every PARSED module when generating the ninja graph
+          # (not just our target's deps). Some product-level modules nil-panic on a partial tree.
+          # We don't need them to build the HAL, so remove their Android.bp so Soong skips them.
+          # Extend PRUNE as new panics appear.
+          PRUNE="
+            hardware/interfaces/compatibility_matrices
+          "
+          for d in $PRUNE; do
+            if [ -e "$AOSP_ROOT/$d" ]; then rm -rf "$AOSP_ROOT/$d" && echo "pruned $d"; fi
+          done
+
       - name: Build the module (tolerating missing unrelated projects)
         run: |
           cd "$AOSP_ROOT"
