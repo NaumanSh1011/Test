@@ -108,21 +108,24 @@ jobs:
           repo init -u https://android.googlesource.com/platform/manifest \
             -b "${{ inputs.aosp_branch }}" --partial-clone --depth=1 --no-tags
           # `repo sync <list>` aborts on the FIRST name not in the manifest (project sets differ per
-          # branch). So filter the requested list against what the manifest actually declares and sync
-          # only the valid ones — unknown names are warned and skipped, not fatal. Combined with
-          # SOONG_ALLOW_MISSING_DEPENDENCIES, anything genuinely unneeded just stays absent.
-          ALL="$(repo list -p 2>/dev/null)"
+          # branch), and `repo list` is empty before the first sync — so sync each requested project
+          # on its own: a name not in the manifest (or a transient failure) warns and is skipped
+          # instead of killing the run. Combined with SOONG_ALLOW_MISSING_DEPENDENCIES, anything
+          # genuinely unneeded just stays absent. `repo sync` accepts a project PATH or name.
           REQ="$(printf '%s' "${{ inputs.projects }}" | tr '\n' ' ' | tr -s ' ')"
-          VALID=""
+          OK=""; SKIP=""
           for p in $REQ; do
-            if printf '%s\n' "$ALL" | grep -qx "$p"; then
-              VALID="$VALID $p"
+            if repo sync -c --no-clone-bundle --optimized-fetch --force-sync \
+                 -j"${{ inputs.sync_jobs }}" "$p" 2>/tmp/syncerr; then
+              OK="$OK $p"
             else
-              echo "::warning::project not in ${{ inputs.aosp_branch }} manifest, skipping: $p"
+              echo "::warning::skipping $p — $(tr '\n' ' ' < /tmp/syncerr | tail -c 200)"
+              SKIP="$SKIP $p"
             fi
           done
-          echo "Syncing:$VALID"
-          repo sync -c --no-clone-bundle --optimized-fetch --prune -j"${{ inputs.sync_jobs }}" $VALID
+          echo "Synced:$OK"
+          echo "Skipped:$SKIP"
+          [ -n "$OK" ] || { echo "::error::no projects synced — check branch/paths"; exit 1; }
           df -h "$AOSP_ROOT"
 
       - name: Stage virtualsco module into the tree
