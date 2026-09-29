@@ -12,8 +12,14 @@
 
 using aidl::android::hardware::audio::common::SinkMetadata;
 using aidl::android::hardware::audio::common::SourceMetadata;
+using aidl::android::media::audio::common::AudioChannelLayout;
+using aidl::android::media::audio::common::AudioFormatType;
 using aidl::android::media::audio::common::AudioOffloadInfo;
+using aidl::android::media::audio::common::AudioPort;
+using aidl::android::media::audio::common::AudioPortExt;
+using aidl::android::media::audio::common::AudioProfile;
 using aidl::android::media::audio::common::MicrophoneInfo;
+using aidl::android::media::audio::common::PcmType;
 
 namespace aidl::android::hardware::audio::core {
 
@@ -48,6 +54,26 @@ ndk::ScopedAStatus ModuleVirtualSco::createOutputStream(
         const std::optional<AudioOffloadInfo>& offloadInfo, std::shared_ptr<StreamOut>* result) {
     return createStreamInstance<StreamOutVirtualSco>(result, std::move(context), sourceMetadata,
                                                      offloadInfo);
+}
+
+ndk::ScopedAStatus ModuleVirtualSco::populateConnectedDevicePort(AudioPort* audioPort, int32_t) {
+    if (audioPort->ext.getTag() != AudioPortExt::device) {
+        LOG(ERROR) << __func__ << ": not a device port: " << audioPort->toString();
+        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    // The template SCO ports carry static profiles (VirtualScoConfiguration.cpp); keep them. If a
+    // port arrives without any, give it the only format the virtual SCO mix ports support.
+    if (audioPort->profiles.empty()) {
+        AudioProfile profile;
+        profile.format.type = AudioFormatType::PCM;
+        profile.format.pcm = PcmType::INT_16_BIT;
+        profile.channelMasks.push_back(AudioChannelLayout::make<AudioChannelLayout::layoutMask>(
+                AudioChannelLayout::LAYOUT_MONO));
+        profile.sampleRates.push_back(kSampleRate);
+        audioPort->profiles.push_back(profile);
+    }
+    LOG(INFO) << __func__ << ": connecting " << audioPort->toString();
+    return ndk::ScopedAStatus::ok();
 }
 
 }  // namespace aidl::android::hardware::audio::core

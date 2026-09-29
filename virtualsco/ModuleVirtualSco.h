@@ -26,6 +26,12 @@ class ModuleVirtualSco final : public Module {
             const std::optional<::aidl::android::media::audio::common::AudioOffloadInfo>&
                     offloadInfo,
             std::shared_ptr<StreamOut>* result) override;
+    // The SCO device ports use CONNECTION_BT_SCO, so the framework treats them as external
+    // devices and connects them via connectExternalDevice; the base Module rejects that for any
+    // port with a non-empty connection, so accept it here.
+    ndk::ScopedAStatus populateConnectedDevicePort(
+            ::aidl::android::media::audio::common::AudioPort* audioPort,
+            int32_t nextPortId) override;
 };
 
 }  // namespace aidl::android::hardware::audio::core
