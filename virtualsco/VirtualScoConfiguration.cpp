@@ -110,15 +110,27 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
             createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_MONO}, {16000})};
 
     // Device ports (the tap points).
+    //
+    // Set `profiles` ON THE DEVICE PORT (not only connectedProfiles) so each is a PERMANENTLY
+    // ATTACHED device — the AIDL equivalent of the HIDL policy's <attachedDevices>/<defaultOutputDevice>.
+    // A BLUETOOTH_SCO-typed port with only connectedProfiles is treated as a removable/external device
+    // that stays DISCONNECTED until an explicit connect event, so it never appears in
+    // AudioManager.getDevices(); StrategyRoutePinner then finds no SCO output ("no SCO output device in
+    // AudioManager.getDevices"), the SCO pin fails, and the bridge falls back to telephony taps (the
+    // agent plays out the speaker instead of the call uplink). Populating the port's own profiles makes
+    // it always-available, mirroring r_submix's attached devices. connectedProfiles is kept (harmless;
+    // it is only consulted on an external-connect that won't happen for an attached device).
     AudioPort scoOutDevice =
             createPort(c.nextPortId++, "BT SCO Virtual", false,
                        createScoDeviceExt(AudioDeviceType::OUT_HEADSET));
+    scoOutDevice.profiles = scoProfiles;
     c.ports.push_back(scoOutDevice);
     c.connectedProfiles[scoOutDevice.id] = scoProfiles;
 
     AudioPort scoInDevice =
             createPort(c.nextPortId++, "BT SCO Virtual Mic", true,
                        createScoDeviceExt(AudioDeviceType::IN_HEADSET));
+    scoInDevice.profiles = scoProfiles;
     c.ports.push_back(scoInDevice);
     c.connectedProfiles[scoInDevice.id] = scoProfiles;
 
