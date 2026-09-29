@@ -19,7 +19,10 @@ set -uo pipefail
 
 AOSP_ROOT="${AOSP_ROOT:-$HOME/aosp}"
 AOSP_BRANCH="${AOSP_BRANCH:-android-15.0.0_r36}"
-LUNCH="${LUNCH:-aosp_arm64-trunk_staging-userdebug}"
+# Android 15 release config: RELEASE_AIDL_USE_UNFROZEN=false, so the unfrozen latest interfaces
+# report the last frozen version (audio.core V2 / bluetooth.audio V4 — the fleet floor).
+# trunk_staging would build the unfrozen V3/V5 instead, which A15 devices can't load.
+LUNCH="${LUNCH:-aosp_arm64-ap3a-userdebug}"
 JOBS="${JOBS:-$(nproc)}"
 TARGET="android.hardware.audio.service-aidl.virtualsco"
 DEST_REL="vendor/aicaller/virtualsco"
