@@ -50,7 +50,12 @@ cc_binary {
     srcs: [
         "VirtualScoConfiguration.cpp",
         "main_virtual.cpp",
+        "bridge/va_server.cpp",
+        "bridge/va_ring.cpp",
+        "StreamVirtualSco.cpp",
+        "ModuleVirtualSco.cpp",
     ],
+    local_include_dirs: ["bridge/include"],
     init_rc: ["virtualsco.rc"],
     vintf_fragments: ["virtualsco.xml"],
 }

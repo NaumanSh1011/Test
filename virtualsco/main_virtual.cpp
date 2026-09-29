@@ -8,9 +8,8 @@
  * this up alongside the vendor's own modules — the AIDL analogue of adding an <xi:include> module
  * to the legacy policy XML.
  *
- * ENUMERATION SPIKE: created as Module::Type::STUB, so streams are AOSP's silent StreamStub. Goal is
- * to confirm the module + its BT-SCO device appear in `dumpsys media.audio_policy` and that
- * StrategyRoutePinner can pin voice-communication to it. The socket-backed streams come next.
+ * Streams are socket-backed (ModuleVirtualSco / StreamVirtualSco): OUTPUT is tapped to the app
+ * client over the va_server bridge (@virtual_audio) as downlink, INPUT is served from it as uplink.
  */
 
 #include <cstdlib>
@@ -22,18 +21,20 @@
 
 #include <core-impl/Module.h>
 
+#include "ModuleVirtualSco.h"
 #include "VirtualScoConfiguration.h"
 
 using aidl::android::hardware::audio::core::Module;
+using aidl::android::hardware::audio::core::ModuleVirtualSco;
 
 int main() {
     android::base::SetMinimumLogSeverity(::android::base::DEBUG);
     ABinderProcess_setThreadPoolMaxThreadCount(16);
     LOG(INFO) << "AICaller virtual SCO AIDL module starting";
 
-    // Reuse AOSP's complete Module implementation; STUB gives silent no-op streams for the spike.
-    auto module = Module::createInstance(Module::Type::STUB,
-                                         aicaller::virtualsco::getVirtualScoConfiguration());
+    // AOSP's complete Module implementation with socket-backed streams; starts the va_server bridge.
+    auto module = ndk::SharedRefBase::make<ModuleVirtualSco>(
+            aicaller::virtualsco::getVirtualScoConfiguration());
     if (module == nullptr) {
         LOG(ERROR) << "failed to create virtual SCO module instance";
         return EXIT_FAILURE;
