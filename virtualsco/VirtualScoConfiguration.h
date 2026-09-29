@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include <aidl/android/hardware/audio/core/Module.h>
+#include <core-impl/Module.h>
 
 namespace aicaller::virtualsco {
 

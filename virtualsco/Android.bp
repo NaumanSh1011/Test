@@ -14,11 +14,38 @@ cc_binary {
     name: "android.hardware.audio.service-aidl.virtualsco",
     relative_install_path: "hw",
     vendor: true,
-    // aidlaudioservice_defaults pulls in libbinder_ndk, libfmq, libaudioaidlcommon, the
-    // audio.core / audio.common / media.audio.common NDK stubs, etc.
-    defaults: ["aidlaudioservice_defaults"],
+    // Mirrors android.hardware.audio.service-aidl.example (hardware/interfaces/audio/aidl/default).
+    // The NDK backends stay shared because libaudioserviceexampleimpl itself links them via the
+    // latest_*_ndk_shared defaults (static variants would collide with those). Built with an
+    // Android 15 release config (ap3a, RELEASE_AIDL_USE_UNFROZEN=false) the unfrozen latest
+    // version reports itself as the last frozen one — audio.core V2 / bluetooth.audio V4, the
+    // fleet floor. On devices whose /vendor lacks these backends (e.g. SM-A566B keeps audio.core
+    // only in /system/lib64), the vendor variants of the .so files are shipped in the Magisk
+    // module's /vendor/lib64 overlay.
+    defaults: [
+        "aidlaudioservice_defaults",
+        "latest_android_hardware_audio_core_sounddose_ndk_shared",
+        "latest_android_hardware_audio_core_ndk_shared",
+        "latest_android_hardware_bluetooth_audio_ndk_shared",
+        "latest_android_media_audio_common_types_ndk_shared",
+    ],
     static_libs: [
         "libaudioserviceexampleimpl",
+    ],
+    // libaudioserviceexampleimpl is static, so its own shared deps (incl. the Bluetooth module
+    // code it always compiles in) must be linked here.
+    shared_libs: [
+        "android.hardware.bluetooth.audio-impl",
+        "libaudio_aidl_conversion_common_ndk",
+        "libbluetooth_audio_session_aidl",
+        "liblog",
+        "libmedia_helper",
+        "libstagefright_foundation",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-DBACKEND_NDK",
     ],
     srcs: [
         "VirtualScoConfiguration.cpp",

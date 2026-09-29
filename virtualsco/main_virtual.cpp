@@ -20,7 +20,7 @@
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 
-#include <aidl/android/hardware/audio/core/Module.h>
+#include <core-impl/Module.h>
 
 #include "VirtualScoConfiguration.h"
 

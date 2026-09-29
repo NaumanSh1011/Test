@@ -19,7 +19,7 @@
 
 #include <vector>
 
-#include <aidl/android/hardware/audio/core/Module.h>
+#include <core-impl/Module.h>
 #include <aidl/android/media/audio/common/AudioChannelLayout.h>
 #include <aidl/android/media/audio/common/AudioDeviceDescription.h>
 #include <aidl/android/media/audio/common/AudioDeviceType.h>

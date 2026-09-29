@@ -1,0 +1,44 @@
+target: android.hardware.audio.service-aidl.virtualsco
+branch: android-15.0.0_r36 (manifest revision refs/tags/android-15.0.0_r36)
+build_id: BP1A.250505.005.D1
+lunch: aosp_arm64-ap3a-userdebug
+platform_version: 15
+RELEASE_AIDL_USE_UNFROZEN: false (get_build_var printed empty)
+linking: option 2 - NDK backends shared (libaudioserviceexampleimpl requires latest_*_ndk_shared); vendor variants shipped in vendor/lib64/
+arch: AArch64
+binary_size: 629288 bytes (616K)
+vendor_lib64: 35 libs, 9.3M
+resolved interface versions (generated NDK headers, unfrozen latest reports previous frozen):
+  android.hardware.audio.core:            static inline const int32_t version = true ? 2 : 3;  -> V2
+  android.hardware.audio.core.sounddose:  static inline const int32_t version = true ? 2 : 3;  -> V2
+  android.hardware.bluetooth.audio:       static inline const int32_t version = true ? 4 : 5;  -> V4
+vintf_declared: android.hardware.audio.core version 2, IModule/virtual
+NEEDED (readelf -d):
+  android.media.audio.common.types-V4-ndk.so
+  android.hardware.bluetooth.audio-V5-ndk.so
+  android.hardware.audio.core-V3-ndk.so
+  android.hardware.audio.core.sounddose-V3-ndk.so
+  libalsautilsv2.so
+  libaudioaidlcommon.so
+  libaudioutils.so
+  libbase.so
+  libbinder_ndk.so
+  libcutils.so
+  libfmq.so
+  libnbaio_mono.so
+  libtinyalsav2.so
+  libutils.so
+  libxml2.so
+  android.hardware.common-V2-ndk.so
+  android.hardware.common.fmq-V1-ndk.so
+  android.hardware.bluetooth.audio-impl.so
+  libaudio_aidl_conversion_common_ndk.so
+  libbluetooth_audio_session_aidl.so
+  liblog.so
+  libmedia_helper.so
+  libstagefright_foundation.so
+  libc++.so
+  libc.so
+  libm.so
+  libdl.so
+built: 2026-09-28T20:51:07Z
