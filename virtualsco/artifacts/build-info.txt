@@ -7,7 +7,7 @@ platform_version: 15
 RELEASE_AIDL_USE_UNFROZEN: false (get_build_var printed empty)
 linking: option 2 - NDK backends shared (libaudioserviceexampleimpl requires latest_*_ndk_shared); vendor variants shipped in vendor/lib64/
 arch: AArch64
-binary_size: 424800 bytes (416K)
+binary_size: 424824 bytes (416K)
 vendor_lib64: 35 libs, 9.3M (unchanged; NEEDED identical to the V2 spike build)
 resolved interface versions (generated NDK headers, unfrozen latest reports previous frozen):
   android.hardware.audio.core:            static inline const int32_t version = true ? 2 : 3;  -> V2
@@ -42,4 +42,4 @@ NEEDED (readelf -d):
   libc.so
   libm.so
   libdl.so
-built: 2026-09-29T18:51:18Z
+built: 2026-09-29T19:13:22Z

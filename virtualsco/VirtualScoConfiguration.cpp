@@ -118,21 +118,20 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
     // AudioManager.getDevices(); StrategyRoutePinner then finds no SCO output ("no SCO output device in
     // AudioManager.getDevices"), the SCO pin fails, and the bridge falls back to telephony taps (the
     // agent plays out the speaker instead of the call uplink). Populating the port's own profiles makes
-    // it always-available, mirroring r_submix's attached devices. connectedProfiles is kept (harmless;
-    // it is only consulted on an external-connect that won't happen for an attached device).
+    // it always-available. No connectedProfiles entry: that map marks a port as externally
+    // connectable (the HAL only reads it in connectExternalDevice), so the SCO ports are declared
+    // purely as attached devices.
     AudioPort scoOutDevice =
             createPort(c.nextPortId++, "BT SCO Virtual", false,
                        createScoDeviceExt(AudioDeviceType::OUT_HEADSET));
     scoOutDevice.profiles = scoProfiles;
     c.ports.push_back(scoOutDevice);
-    c.connectedProfiles[scoOutDevice.id] = scoProfiles;
 
     AudioPort scoInDevice =
             createPort(c.nextPortId++, "BT SCO Virtual Mic", true,
                        createScoDeviceExt(AudioDeviceType::IN_HEADSET));
     scoInDevice.profiles = scoProfiles;
     c.ports.push_back(scoInDevice);
-    c.connectedProfiles[scoInDevice.id] = scoProfiles;
 
     // Mix ports.
     AudioPort outMix = createPort(c.nextPortId++, "virtual output", false, createPortMixExt(1, 1));
