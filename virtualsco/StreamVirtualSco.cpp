@@ -2,10 +2,12 @@
  * Socket-backed streams for the virtual BT-SCO module. See StreamVirtualSco.h.
  *
  * Driver state machine and pacing are copied from AOSP's DriverStubImpl.cpp; transfer() hands the
- * PCM to/from the va_server bridge. The mix ports are PCM_16_BIT mono (VirtualScoConfiguration.cpp),
- * so one frame == one int16 sample and buffers map 1:1 onto va_server frames — no conversion.
+ * PCM to/from the va_server bridge. Both sides run at 16 kHz PCM16 (VirtualScoConfiguration.cpp), so
+ * no resampling: capture is mono (1:1 with va_server frames); playback is stereo, because AudioFlinger
+ * only opens a MIXER thread (which resamples VoIP clients) for >= 2 channels, and is downmixed here.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -28,9 +30,15 @@ DriverVirtualSco::DriverVirtualSco(const StreamContext& context)
       mFrameSizeBytes(context.getFrameSize()),
       mSampleRate(context.getSampleRate()),
       mIsAsynchronous(!!context.getAsyncCallback()),
-      mIsInput(context.isInput()) {}
+      mIsInput(context.isInput()),
+      mChannelCount(std::max<size_t>(1, context.getFrameSize() / sizeof(int16_t))) {}
 
 ::android::status_t DriverVirtualSco::init() {
+    if (mChannelCount > 1) {
+        mMonoBuffer.resize(mBufferSizeFrames);
+    }
+    LOG(INFO) << __func__ << ": " << (mIsInput ? "input" : "output") << " " << mSampleRate << " Hz, "
+              << mChannelCount << " ch, buffer " << mBufferSizeFrames << " frames";
     mIsInitialized = true;
     return ::android::OK;
 }
@@ -92,16 +100,35 @@ DriverVirtualSco::DriverVirtualSco(const StreamContext& context)
     if (mIsStandby) {
         LOG(FATAL) << __func__ << ": must not happen while in standby";
     }
-    // Bridge I/O first (non-blocking ring ops), then StreamStub's wall-clock pacing.
+    // Bridge I/O first (non-blocking ring ops), then StreamStub's wall-clock pacing. The socket is
+    // mono; multi-channel buffers go through mMonoBuffer (sized for a full HAL buffer in init()).
     int16_t* samples = static_cast<int16_t*>(buffer);
+    const size_t monoFrames =
+            mChannelCount > 1 ? std::min(frameCount, mMonoBuffer.size()) : frameCount;
+    int16_t* mono = mChannelCount > 1 ? mMonoBuffer.data() : samples;
     if (mIsInput) {
-        // Uplink: agent voice becomes the virtual SCO mic; silence when nothing is buffered.
-        if (!va_server_pull_uplink(samples, static_cast<int>(frameCount))) {
+        // Uplink: agent voice becomes the virtual mic; silence when nothing is buffered.
+        if (!va_server_pull_uplink(mono, static_cast<int>(monoFrames))) {
             memset(buffer, 0, frameCount * mFrameSizeBytes);
+        } else if (mChannelCount > 1) {
+            for (size_t i = 0; i < monoFrames; ++i) {
+                for (size_t ch = 0; ch < mChannelCount; ++ch) {
+                    samples[i * mChannelCount + ch] = mono[i];
+                }
+            }
         }
     } else {
-        // Downlink: call playback routed to the virtual SCO out is tapped to the app client.
-        va_server_push_downlink(samples, static_cast<int>(frameCount));
+        // Downlink: the mixed call playback routed to the virtual out is tapped to the app client.
+        if (mChannelCount > 1) {
+            for (size_t i = 0; i < monoFrames; ++i) {
+                int32_t sum = 0;
+                for (size_t ch = 0; ch < mChannelCount; ++ch) {
+                    sum += samples[i * mChannelCount + ch];
+                }
+                mono[i] = static_cast<int16_t>(sum / static_cast<int32_t>(mChannelCount));
+            }
+        }
+        va_server_push_downlink(mono, static_cast<int>(monoFrames));
     }
     *actualFrameCount = frameCount;
     if (mIsAsynchronous) {

@@ -97,3 +97,44 @@ auto-attached BUS device) is unchanged.
 - If a single 48 kHz mixer profile still opens DIRECT on this device, try the AOSP `r_submix` mix-port
   shape (48 kHz stereo, `AUDIO_OUTPUT_FLAG_NONE`) as the reference — r_submix is the canonical software
   MIXER endpoint and is known to open non-direct.
+
+---
+
+## Decision: implemented as **stereo 16 kHz**, not 48 kHz
+
+**What was built:** the playback side (`virtual output` mix port + `OUT_BUS` device port) advertises
+**PCM16 stereo 16 kHz**; the capture side stays **PCM16 mono 16 kHz** (already working).
+`StreamVirtualSco::transfer()` downmixes the stereo playback buffer to mono before
+`va_server_push_downlink` (and would duplicate mono across channels on a multi-channel input). No
+resampler anywhere; the socket stays 16 kHz mono / 320-sample frames.
+
+**Why stereo 16 kHz is expected to work — the DIRECT thread was caused by *mono*, not by 16 kHz.**
+In this tree (android-15.0.0_r36):
+
+1. `AudioFlinger::openOutput_l` (`frameworks/av/services/audioflinger/AudioFlinger.cpp` ~l.3151) creates a
+   **DIRECT** thread if the output has the DIRECT flag **or** the HAL format isn't a valid mixer sink
+   format **or** the channel mask isn't a valid mixer sink mask; otherwise a **MIXER** thread.
+2. `IAfThreadBase::isValidPcmSinkChannelMask` (`Threads.cpp` ~l.287) rejects fewer than 2 channels:
+   `if (channelCount < FCC_2 // mono is not supported at this time`. Our mix port was mono → invalid sink
+   mask → DIRECT. The sample rate plays no part in this decision.
+3. PCM16 is a valid sink format, and our mix port has no DIRECT flag, so with a **stereo** mask the
+   condition is false → **MIXER** thread.
+4. A MIXER thread runs at whatever rate the HAL stream is opened at and **resamples every track to the
+   thread rate** — that's what lets WhatsApp's 48 kHz VoIP playback attach to a 16 kHz output (the same way
+   the capture side already resamples WhatsApp's 48 kHz record to our 16 kHz input).
+
+**Why not 48 kHz:** it would also produce a MIXER thread (stereo is what matters), but it adds a
+48↔16 kHz resampler in `transfer()` in both directions — more code, CPU and latency — for no benefit:
+the socket and the app side are 16 kHz voice anyway, and AudioFlinger's mixer already does the one
+resampling step we need (48 → 16 kHz on playback). With 16 kHz on both ends of the HAL, `transfer()` only
+changes channel count.
+
+**Residual risks to verify on device:**
+- `dumpsys media.audio_flinger`: the `OUT_BUS` thread should now be `type 0 (MIXER)` at `16000 Hz`,
+  channel mask stereo. `logcat -s AHAL_VirtualScoStream` logs `init: output 16000 Hz, 2 ch, …`.
+- Whether APM actually places WhatsApp's VoIP track on this output depends on routing/pinning
+  (`setPreferredDeviceForStrategy`), not on the thread type — the MIXER thread removes the format
+  blocker only. Acceptance items 2–4 above still apply.
+- A mixer thread at 16 kHz band-limits playback to 8 kHz — fine for voice (the downlink is voice-only).
+- If on this device the output still opens DIRECT, fall back to the spec's 48 kHz stereo shape (r_submix
+  reference) and add the 48→16 kHz conversion.

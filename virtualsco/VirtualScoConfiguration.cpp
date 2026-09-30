@@ -118,15 +118,24 @@ static AudioRoute createRoute(const std::vector<AudioPort>& sources, const Audio
 
 std::unique_ptr<Configuration> getVirtualScoConfiguration() {
     Configuration c;
+    // Capture side: PCM16 mono 16 kHz, 1:1 with the va_server uplink frames. RecordThreads accept a
+    // mono HAL stream and resample/remix each client, so this opens as a normal capture.
     const std::vector<AudioProfile> scoProfiles{
             createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_MONO}, {16000})};
+    // Playback side: PCM16 STEREO 16 kHz. AudioFlinger opens a MIXER thread only for a sink channel
+    // mask of >= 2 channels (isValidPcmSinkChannelMask: "mono is not supported at this time");
+    // with a mono-only profile it falls back to a DIRECT thread, which doesn't resample, so 48 kHz
+    // VoIP playback could never attach. A mixer thread runs at any rate and resamples every client
+    // to it, so 16 kHz is kept; StreamVirtualSco downmixes stereo -> mono for the 16 kHz socket.
+    const std::vector<AudioProfile> outProfiles{
+            createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_STEREO}, {16000})};
 
     // Device ports (the tap points): attached BUS devices at the fixed address, with static profiles
     // (no connectedProfiles — there is no external connect).
     AudioPort scoOutDevice =
             createPort(c.nextPortId++, "BT SCO Virtual", false,
                        createVirtualDeviceExt(AudioDeviceType::OUT_BUS));
-    scoOutDevice.profiles = scoProfiles;
+    scoOutDevice.profiles = outProfiles;
     c.ports.push_back(scoOutDevice);
 
     AudioPort scoInDevice =
@@ -137,7 +146,7 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
 
     // Mix ports.
     AudioPort outMix = createPort(c.nextPortId++, "virtual output", false, createPortMixExt(1, 1));
-    outMix.profiles = scoProfiles;
+    outMix.profiles = outProfiles;
     c.ports.push_back(outMix);
 
     AudioPort inMix = createPort(c.nextPortId++, "virtual input", true, createPortMixExt(1, 1));

@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "core-impl/Stream.h"
 
 namespace aidl::android::hardware::audio::core {
@@ -33,6 +35,10 @@ class DriverVirtualSco : virtual public DriverInterface {
     const int mSampleRate;
     const bool mIsAsynchronous;
     const bool mIsInput;
+    // PCM16 channels per frame. The socket is always mono; the playback side runs stereo (a MIXER
+    // thread needs >= 2 channels), so transfer() down/up-mixes through mMonoBuffer.
+    const size_t mChannelCount;
+    std::vector<int16_t> mMonoBuffer;  // Sized in init(), reused per transfer (no audio-path alloc).
     bool mIsInitialized = false;  // Used for validating the state machine logic.
     bool mIsStandby = true;       // Used for validating the state machine logic.
     int64_t mStartTimeNs = 0;
