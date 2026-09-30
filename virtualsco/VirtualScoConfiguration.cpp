@@ -6,6 +6,10 @@
  * ports and their routes. It is modelled 1:1 on AOSP's getRSubmixConfiguration() (a software-only
  * "virtual" device), so it plugs straight into the default Module implementation.
  *
+ * On this AIDL build the device ports are presented as BUS devices (TYPE_BUS, empty connection) so
+ * the framework auto-attaches them; the app's pinner matches the device by address across
+ * TYPE_BLUETOOTH_SCO (legacy HIDL fleet) or TYPE_BUS (this build). See OPTION2_BUS_DEVICE.md.
+ *
  * For the ENUMERATION SPIKE the module is created as Module::Type::STUB (see main_virtual.cpp),
  * i.e. the streams are AOSP's silent StreamStub. That is enough to answer the make-or-break
  * question: does the framework enumerate a vendor-injected IModule/virtual and let
@@ -17,6 +21,7 @@
  * are file-static and not exported by libaudioserviceexampleimpl.
  */
 
+#include <string>
 #include <vector>
 
 #include <core-impl/Module.h>
@@ -62,18 +67,26 @@ static AudioProfile createProfile(PcmType pcmType, const std::vector<int32_t>& c
     return profile;
 }
 
-// BT-SCO template device ext. connection = CONNECTION_BT_SCO maps {OUT_HEADSET|IN_HEADSET} to the
-// legacy AUDIO_DEVICE_*_BLUETOOTH_SCO_HEADSET the pinner expects.
-//
-// No address: this is an external-device TEMPLATE port. On setDeviceConnectionState the framework's
-// Hal2AidlMapper looks the template up with the address reset to empty and an exact AudioDevice
-// match, so a template carrying an address is never found and connectExternalDevice is never called
-// (-38 INVALID_OPERATION, see SETDEVCONN_38_INVESTIGATION.md). The MAC (02:56:41:00:00:01, which
-// StrategyRoutePinner pins by) comes from the connect call and is copied onto the connected port.
-static AudioPortExt createScoDeviceExt(AudioDeviceType devType) {
+// The virtual device's address. StrategyRoutePinner matches the device by this address (see the
+// legacy HAL / the app's sco/ package). Declared as an `id` string, not `mac`: for an
+// empty-connection device the framework converts legacy addresses back to AIDL as `id`
+// (suggestDeviceAddressTag), and the HAL mapper compares devices exactly, so a `mac`-tagged address
+// would stop matching on the way back (patches / stream opens).
+static const std::string kVirtualDeviceAddress = "02:56:41:00:00:01";
+
+// Virtual device ext: a BUS device (AudioDeviceInfo.TYPE_BUS) with an EMPTY connection type and a
+// fixed address. The framework only auto-attaches AIDL device ports whose connection is empty
+// (AudioPolicyConfig::loadFromAidl), so this device is available at boot and appears in
+// AudioManager.getDevices() without any setDeviceConnectionState call, attached to this module.
+// (A CONNECTION_BT_SCO port can only become available via an external connect, which on the target
+// stack binds to the vendor's own BT-SCO port — see OPTION2_BUS_DEVICE.md.)
+static AudioPortExt createVirtualDeviceExt(AudioDeviceType devType) {
     AudioPortDeviceExt deviceExt;
     deviceExt.device.type.type = devType;
-    deviceExt.device.type.connection = AudioDeviceDescription::CONNECTION_BT_SCO;
+    deviceExt.device.address =
+            aidl::android::media::audio::common::AudioDeviceAddress::make<
+                    aidl::android::media::audio::common::AudioDeviceAddress::id>(
+                    kVirtualDeviceAddress);
     deviceExt.flags = 0;
     return AudioPortExt::make<AudioPortExt::Tag::device>(deviceExt);
 }
@@ -108,21 +121,17 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
     const std::vector<AudioProfile> scoProfiles{
             createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_MONO}, {16000})};
 
-    // Device ports (the tap points): external BT-SCO TEMPLATE ports (no address, see
-    // createScoDeviceExt). The framework never treats a CONNECTION_BT_SCO port as attached
-    // (AudioPolicyConfig::loadFromAidl only attaches ports with an empty connection), so they only
-    // become available — and appear in AudioManager.getDevices() — once something calls
-    // AudioSystem.setDeviceConnectionState(AVAILABLE) with the MAC; ModuleVirtualSco then accepts
-    // the connect. The static `profiles` on the port are what the connected port inherits.
+    // Device ports (the tap points): attached BUS devices at the fixed address, with static profiles
+    // (no connectedProfiles — there is no external connect).
     AudioPort scoOutDevice =
             createPort(c.nextPortId++, "BT SCO Virtual", false,
-                       createScoDeviceExt(AudioDeviceType::OUT_HEADSET));
+                       createVirtualDeviceExt(AudioDeviceType::OUT_BUS));
     scoOutDevice.profiles = scoProfiles;
     c.ports.push_back(scoOutDevice);
 
     AudioPort scoInDevice =
             createPort(c.nextPortId++, "BT SCO Virtual Mic", true,
-                       createScoDeviceExt(AudioDeviceType::IN_HEADSET));
+                       createVirtualDeviceExt(AudioDeviceType::IN_BUS));
     scoInDevice.profiles = scoProfiles;
     c.ports.push_back(scoInDevice);
 

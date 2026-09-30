@@ -44,3 +44,16 @@ unchanged. The `137770f` connect-accept override becomes unused (harmless to lea
 That routing `USAGE_VOICE_COMMUNICATION` playback/capture to a BUS device actually taps a third-party
 VoIP app's audio (BUS is a generic routing sink, so it should — but confirm `out_write`/`in_read` on the
 `va_server` socket during a WhatsApp call).
+
+## Implemented (HAL side)
+`VirtualScoConfiguration.cpp`: the two device ports are now `OUT_BUS` / `IN_BUS` with an empty
+connection, static PCM16 mono 16 kHz profiles, and the fixed address. Rebuilt incrementally with
+`aosp_arm64-ap3a-userdebug`; NEEDED unchanged.
+
+**One deviation from the spec above — the address is declared as an `id` string, not `mac`:**
+`AudioDeviceAddress::id("02:56:41:00:00:01")`. For an empty-connection device the framework converts
+legacy address strings back to AIDL as the `id` variant (`suggestDeviceAddressTag` only picks `mac` for
+BT/wireless connections), and `Hal2AidlMapper` matches devices exactly (type + address incl. the variant).
+A `mac`-tagged address would round-trip as `id` and stop matching when the framework later creates
+patches / opens streams on the device. The app-visible `AudioDeviceInfo.getAddress()` string is the same
+`02:56:41:00:00:01` either way.

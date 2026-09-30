@@ -1,4 +1,5 @@
 target: android.hardware.audio.service-aidl.virtualsco
+device_type: BUS (OUT_BUS / IN_BUS, empty connection, auto-attached), address id "02:56:41:00:00:01"
 streams: socket-backed (ModuleVirtualSco/StreamVirtualSco over va_server @virtual_audio, 16000 Hz mono, 320-sample frames)
 branch: android-15.0.0_r36 (manifest revision refs/tags/android-15.0.0_r36)
 build_id: BP1A.250505.005.D1
@@ -7,7 +8,7 @@ platform_version: 15
 RELEASE_AIDL_USE_UNFROZEN: false (get_build_var printed empty)
 linking: option 2 - NDK backends shared (libaudioserviceexampleimpl requires latest_*_ndk_shared); vendor variants shipped in vendor/lib64/
 arch: AArch64
-binary_size: 424784 bytes (416K)
+binary_size: 424808 bytes (416K)
 vendor_lib64: 35 libs, 9.3M (unchanged; NEEDED identical to the V2 spike build)
 resolved interface versions (generated NDK headers, unfrozen latest reports previous frozen):
   android.hardware.audio.core:            static inline const int32_t version = true ? 2 : 3;  -> V2
@@ -42,4 +43,4 @@ NEEDED (readelf -d):
   libc.so
   libm.so
   libdl.so
-built: 2026-09-30T05:54:25Z
+built: 2026-09-30T06:30:43Z
