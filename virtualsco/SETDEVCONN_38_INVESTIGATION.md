@@ -136,3 +136,23 @@ device is attached to.
 Identify the exact `-38` branch and a change (HAL config, module, or the connect-call shape) that makes
 APM **reach `connectExternalDevice` on the `virtual` module** and surface the device in
 `AudioManager.getDevices()` as `TYPE_BLUETOOTH_SCO @ 02:56:41:00:00:01` (out + in).
+
+---
+
+## Retest after 0bbcc28 (addressless) — the "module binding" caveat is realized → going Option 2
+
+On SM-A566B (0bbcc28 verified on device; virtual device now `{…BLUETOOTH_SCO_HEADSET, @:}` empty address;
+stock `libaudiopolicymanagerdefault.so`):
+- `setDeviceConnectionState(…AVAILABLE)` still returns **-38**, and the verbose capture
+  (`Hal2AidlMapper:V DeviceHalAidl:V AHAL_VirtualScoModule:V AudioFlinger:V AudioSystem-JNI:V`) shows
+  **no `setDevicePortConnectedState` / `connectExternalDevice` / `populateConnectedDevicePort` for our
+  module at all** — only the primary module's routine call patches. The connect never reaches `virtual`.
+- This matches the **"Caveat — module binding"** above: with an addressless template, APM binds the
+  connect by type to the vendor's BT-SCO port (which precedes `virtual`), and it fails there (`-38`)
+  rather than reaching us.
+
+Per the recommendation in that caveat, **we are switching primary effort to Option 2 (`TYPE_BUS`,
+empty-connection auto-attached, per-module)** — see `OPTION2_BUS_DEVICE.md`. It needs no
+`setDeviceConnectionState` (auto-attached at boot), and an empty-connection device is attached to *its
+own* module, so it can't be stolen by the vendor's BT-SCO port. This `-38` line of investigation is
+parked unless Option 2 also hits a wall.
