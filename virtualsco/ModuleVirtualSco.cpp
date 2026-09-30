@@ -16,6 +16,7 @@ using aidl::android::media::audio::common::AudioChannelLayout;
 using aidl::android::media::audio::common::AudioFormatType;
 using aidl::android::media::audio::common::AudioOffloadInfo;
 using aidl::android::media::audio::common::AudioPort;
+using aidl::android::media::audio::common::AudioPortConfig;
 using aidl::android::media::audio::common::AudioPortExt;
 using aidl::android::media::audio::common::AudioProfile;
 using aidl::android::media::audio::common::MicrophoneInfo;
@@ -74,6 +75,11 @@ ndk::ScopedAStatus ModuleVirtualSco::populateConnectedDevicePort(AudioPort* audi
     }
     LOG(INFO) << __func__ << ": connecting " << audioPort->toString();
     return ndk::ScopedAStatus::ok();
+}
+
+int32_t ModuleVirtualSco::getNominalLatencyMs(const AudioPortConfig&) {
+    static constexpr int32_t kLatencyMs = 20;
+    return kLatencyMs;
 }
 
 }  // namespace aidl::android::hardware::audio::core

@@ -122,13 +122,14 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
     // mono HAL stream and resample/remix each client, so this opens as a normal capture.
     const std::vector<AudioProfile> scoProfiles{
             createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_MONO}, {16000})};
-    // Playback side: PCM16 STEREO 16 kHz. AudioFlinger opens a MIXER thread only for a sink channel
-    // mask of >= 2 channels (isValidPcmSinkChannelMask: "mono is not supported at this time");
-    // with a mono-only profile it falls back to a DIRECT thread, which doesn't resample, so 48 kHz
-    // VoIP playback could never attach. A mixer thread runs at any rate and resamples every client
-    // to it, so 16 kHz is kept; StreamVirtualSco downmixes stereo -> mono for the 16 kHz socket.
+    // Playback side: PCM16 STEREO 48 kHz. Stereo because AudioFlinger opens a MIXER thread only for
+    // a sink channel mask of >= 2 channels (isValidPcmSinkChannelMask: "mono is not supported at
+    // this time"; mono fell back to a non-resampling DIRECT thread). 48 kHz because on the target
+    // device a 16 kHz OUT_BUS mixer never consumed its tracks, while 48 kHz mixers mix VoIP (48 kHz)
+    // playback fine (OUT_BUS_GO_48K.md). StreamVirtualSco downmixes and decimates 48 -> 16 kHz
+    // mono for the socket.
     const std::vector<AudioProfile> outProfiles{
-            createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_STEREO}, {16000})};
+            createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_STEREO}, {48000})};
 
     // Device ports (the tap points): attached BUS devices at the fixed address, with static profiles
     // (no connectedProfiles — there is no external connect).

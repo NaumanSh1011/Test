@@ -50,3 +50,48 @@ BUS device out of `AudioManager.getDevices()`, so the app pinner logs "no virtua
 (agent plays out the speaker; no tap). For a clean test: reboot → `setenforce 0` → one `killall
 audioserver` → confirm the pin succeeds (`StrategyRoutePinner: pinned … out=true in=true`) → then call.
 AudioMixer resampler lines are INFO level, so no extra restart for verbose is needed.
+
+---
+
+## Implemented: 48 kHz output + explicit 20 ms buffers (combined change)
+
+**Built as a combined change**, because the debug data (`94cfff0`) showed our own **16 kHz** render
+(same rate as the sink, no resampler needed) also never drained. So the sample rate alone doesn't
+explain the stall, and the "48 kHz mixes fine" evidence came from the vendor's primary output (different
+HAL, different buffering). The one anomaly specific to our thread was its buffer geometry, so both are
+addressed:
+
+1. **`VirtualScoConfiguration.cpp`:** playback mix port + `OUT_BUS` → **PCM16 stereo 48 kHz** (stereo still
+   required for a MIXER thread). Capture unchanged: PCM16 mono 16 kHz (works).
+2. **`ModuleVirtualSco::getNominalLatencyMs()` → 20 ms** (was the base `Module`'s placeholder 5 ms).
+3. **`StreamVirtualSco::transfer()` (output):** stereo → mono downmix, then a 31-tap Hamming-windowed-sinc
+   low-pass (cutoff 7.2 kHz) + **decimate by 3 (48 → 16 kHz)**, with filter state carried across calls so
+   any HAL frame count works. Host-tested with the identical algorithm, fed in uneven chunks: exactly
+   16000 out samples per second, passband gain 0.998 @ 1 kHz / 1.001 @ 3.4 kHz, stopband −57.6 dB @ 10 kHz,
+   −66 dB @ 20 kHz. Input path unchanged (16 kHz mono, 1:1 with the socket).
+
+### Trace of `HAL frame count: 10` (android-15.0.0_r36)
+- AudioFlinger: `mFrameCount = getBufferSize() / getFrameSize()` (`Threads.cpp` ~l.3225). Both come from
+  the same `StreamContextAidl` (`StreamHalAidl.cpp` `getBufferSize` / `getFrameSize`), i.e.
+  `HAL frame count` == the HAL descriptor's **`bufferSizeFrames`**.
+- The HAL fills that from `StreamContext::getBufferSizeInFrames()` (`Stream.cpp` l.70) — the FMQ size in
+  frames, which is what our driver logged (`buffer 80 frames`).
+- The framework requests the buffer as the patch's `minimumStreamBufferSizeFrames`
+  (`Hal2AidlMapper.cpp` ~l.907), which the default HAL computes from `getNominalLatencyMs()` — **5 ms** by
+  default (`Module.cpp` l.375: "Arbitrary value. Implementations must override this method") → 5 ms @
+  16 kHz = **80 frames**.
+- So stock AOSP would print `HAL frame count: 80`. **The `10` (= 80 / 8) isn't produced by this tree** —
+  either the device's audioserver differs from AOSP here (Samsung modifies audioserver components), or
+  the value came from another thread block. Please paste the raw `OUT_BUS` thread block from
+  `dumpsys media.audio_flinger` with this build.
+- Regardless, a 5 ms buffer is a placeholder that real HALs override; with the 20 ms override the HAL
+  now computes **1024 frames** for the 48 kHz output (`calculateBufferSizeFrames` rounds >512 frames at
+  ≥44.1 kHz up to a power of two) and **320 frames** for the 16 kHz input.
+
+### What to check on device with this build
+- `AHAL_VirtualScoStream: init: output 48000 Hz, 2 ch, buffer 1024 frames, decimation 3` and
+  `init: input 16000 Hz, 1 ch, buffer 320 frames, decimation 1`.
+- `OUT_BUS` thread: `type 0 (MIXER)` @ 48000 Hz, stereo; its `HAL frame count` / `Normal frame count`
+  (expect 1024-ish, not 10).
+- WhatsApp's playback track (and our render) on it: **`Server` advancing**.
+- Downlink `rms` non-zero while the far side talks; call doesn't drop.

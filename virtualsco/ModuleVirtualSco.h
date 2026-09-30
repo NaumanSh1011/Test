@@ -32,6 +32,11 @@ class ModuleVirtualSco final : public Module {
     ndk::ScopedAStatus populateConnectedDevicePort(
             ::aidl::android::media::audio::common::AudioPort* audioPort,
             int32_t nextPortId) override;
+    // The base Module returns an arbitrary 5 ms, which sizes the stream buffers (framework
+    // frameCount = the patch's minimumStreamBufferSizeFrames) far below a mixer period. Use 20 ms,
+    // matching the va_server frame (320 samples @ 16 kHz).
+    int32_t getNominalLatencyMs(
+            const ::aidl::android::media::audio::common::AudioPortConfig& portConfig) override;
 };
 
 }  // namespace aidl::android::hardware::audio::core

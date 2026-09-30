@@ -2,9 +2,10 @@
  * Socket-backed streams for the virtual BT-SCO module. See StreamVirtualSco.h.
  *
  * Driver state machine and pacing are copied from AOSP's DriverStubImpl.cpp; transfer() hands the
- * PCM to/from the va_server bridge. Both sides run at 16 kHz PCM16 (VirtualScoConfiguration.cpp), so
- * no resampling: capture is mono (1:1 with va_server frames); playback is stereo, because AudioFlinger
- * only opens a MIXER thread (which resamples VoIP clients) for >= 2 channels, and is downmixed here.
+ * PCM to/from the va_server bridge (16 kHz mono PCM16). Capture runs at 16 kHz mono, 1:1 with the
+ * socket frames. Playback runs at 48 kHz stereo (VirtualScoConfiguration.cpp: stereo so AudioFlinger
+ * opens a MIXER thread, 48 kHz so that mixer consumes VoIP playback); it is downmixed to mono and
+ * decimated 48 -> 16 kHz here before va_server_push_downlink.
  */
 
 #include <algorithm>
@@ -37,8 +38,28 @@ DriverVirtualSco::DriverVirtualSco(const StreamContext& context)
     if (mChannelCount > 1) {
         mMonoBuffer.resize(mBufferSizeFrames);
     }
+    if (!mIsInput && mSampleRate > kSocketRate && mSampleRate % kSocketRate == 0) {
+        mDecimFactor = static_cast<size_t>(mSampleRate / kSocketRate);
+        // Hamming-windowed sinc low-pass at 0.9 x the socket Nyquist (7.2 kHz), unity DC gain.
+        const double fc = 0.45 * kSocketRate / mSampleRate;  // cycles per input sample
+        const double mid = (kFirTaps - 1) / 2.0;
+        double sum = 0;
+        for (size_t n = 0; n < kFirTaps; ++n) {
+            const double m = n - mid;
+            const double sinc = m == 0 ? 2 * fc : std::sin(2 * M_PI * fc * m) / (M_PI * m);
+            const double window = 0.54 - 0.46 * std::cos(2 * M_PI * n / (kFirTaps - 1));
+            mFirCoeffs[n] = static_cast<float>(sinc * window);
+            sum += mFirCoeffs[n];
+        }
+        for (auto& c : mFirCoeffs) c = static_cast<float>(c / sum);
+        mSocketBuffer.resize(mBufferSizeFrames / mDecimFactor + 1);
+    } else if (mSampleRate != kSocketRate) {
+        LOG(WARNING) << __func__ << ": unsupported " << (mIsInput ? "input" : "output") << " rate "
+                     << mSampleRate << " Hz; socket audio will be at the wrong rate";
+    }
     LOG(INFO) << __func__ << ": " << (mIsInput ? "input" : "output") << " " << mSampleRate << " Hz, "
-              << mChannelCount << " ch, buffer " << mBufferSizeFrames << " frames";
+              << mChannelCount << " ch, buffer " << mBufferSizeFrames << " frames, decimation "
+              << mDecimFactor;
     mIsInitialized = true;
     return ::android::OK;
 }
@@ -89,6 +110,9 @@ DriverVirtualSco::DriverVirtualSco(const StreamContext& context)
     mIsStandby = false;
     mStartTimeNs = ::android::uptimeNanos();
     mFramesSinceStart = 0;
+    mFirHistory.fill(0);
+    mFirPos = 0;
+    mDecimPhase = 0;
     return ::android::OK;
 }
 
@@ -128,7 +152,27 @@ DriverVirtualSco::DriverVirtualSco(const StreamContext& context)
                 mono[i] = static_cast<int16_t>(sum / static_cast<int32_t>(mChannelCount));
             }
         }
-        va_server_push_downlink(mono, static_cast<int>(monoFrames));
+        if (mDecimFactor > 1) {
+            size_t socketFrames = 0;
+            for (size_t i = 0; i < monoFrames; ++i) {
+                mFirHistory[mFirPos] = mono[i];
+                mFirPos = mFirPos + 1 == kFirTaps ? 0 : mFirPos + 1;
+                if (mDecimPhase == 0) {
+                    float acc = 0;
+                    size_t idx = mFirPos;  // oldest sample; the filter is symmetric
+                    for (size_t k = 0; k < kFirTaps; ++k) {
+                        acc += mFirCoeffs[k] * mFirHistory[idx];
+                        idx = idx + 1 == kFirTaps ? 0 : idx + 1;
+                    }
+                    mSocketBuffer[socketFrames++] =
+                            static_cast<int16_t>(std::clamp(std::lround(acc), -32768L, 32767L));
+                }
+                mDecimPhase = mDecimPhase + 1 == mDecimFactor ? 0 : mDecimPhase + 1;
+            }
+            va_server_push_downlink(mSocketBuffer.data(), static_cast<int>(socketFrames));
+        } else {
+            va_server_push_downlink(mono, static_cast<int>(monoFrames));
+        }
     }
     *actualFrameCount = frameCount;
     if (mIsAsynchronous) {

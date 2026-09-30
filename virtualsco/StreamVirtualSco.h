@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "core-impl/Stream.h"
@@ -39,6 +40,16 @@ class DriverVirtualSco : virtual public DriverInterface {
     // thread needs >= 2 channels), so transfer() down/up-mixes through mMonoBuffer.
     const size_t mChannelCount;
     std::vector<int16_t> mMonoBuffer;  // Sized in init(), reused per transfer (no audio-path alloc).
+    // Output only: decimation from the playback rate (48 kHz) to the 16 kHz socket rate, through a
+    // windowed-sinc low-pass FIR whose state carries across transfer() calls.
+    static constexpr int kSocketRate = 16000;
+    static constexpr size_t kFirTaps = 31;
+    size_t mDecimFactor = 1;  // mSampleRate / kSocketRate when that's an integer > 1, else 1.
+    std::array<float, kFirTaps> mFirCoeffs{};
+    std::array<float, kFirTaps> mFirHistory{};
+    size_t mFirPos = 0;
+    size_t mDecimPhase = 0;
+    std::vector<int16_t> mSocketBuffer;  // Decimated output, sized in init().
     bool mIsInitialized = false;  // Used for validating the state machine logic.
     bool mIsStandby = true;       // Used for validating the state machine logic.
     int64_t mStartTimeNs = 0;
