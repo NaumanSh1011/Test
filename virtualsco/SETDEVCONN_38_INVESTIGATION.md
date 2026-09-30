@@ -74,6 +74,64 @@ plays out the speaker instead of the call uplink).
   vendor's dead SCO port — note that).
 - Confirm the loaded policy-manager library (AOSP vs Samsung custom).
 
+## Findings (android-15.0.0_r36 AOSP sources) — root cause found, fix built
+
+**Q1 — the `-38` branch.** It is **not** the declared-device lookup: the connect path calls
+`HwModuleCollection::getDeviceDescriptor(..., allowToCreate=true)`, which creates a device instead of
+returning null, so "could not find HW module" can't fire. It is the HAL-connect step in
+`AudioPolicyManager::setDeviceConnectionStateInt`: `broadcastDeviceConnectionState(CONNECTED)` fails →
+`mAvailableOutputDevices.remove` → `return INVALID_OPERATION`. The capture should contain (E, tag
+`APM_AudioPolicyManager`) `Error -22 while setting connected state …` and
+`setDeviceConnectionStateInt() device … connection failed`.
+
+**Q2 — why our device isn't matched (the actual reject).** The reject is one layer below APM, in the
+framework's `Hal2AidlMapper` (`frameworks/av/media/libaudiohal/impl/Hal2AidlMapper.cpp`):
+- `AudioFlinger::setDeviceConnectedState` fans the connect out to **every** HAL module (success if any
+  accepts).
+- `Hal2AidlMapper::setDevicePortConnectedState` looks up the **template** port with the requested
+  address **reset to empty** (`// Reset the device address to find the "template" port.`), then
+  `findPort()` → `audioDeviceMatches()` compares the **whole** `AudioDevice` (type **and** address).
+- Our template ports declared the MAC, so they never matched → the mapper returns `BAD_VALUE` (logged
+  only at D, "normal" because it's asked in every module) and **never calls `connectExternalDevice`** →
+  no module accepts → APM `-38`. That's why `populateConnectedDevicePort` never logs.
+
+So yes: an external (BT) template port must be declared **without an address**; the address comes with
+the connect request and the HAL copies it onto the connected port
+(`Module::connectExternalDevice`: `connectedDevicePort.device.address = inputDevicePort.device.address`).
+
+**Q3 — Samsung policy manager.** Not needed to explain `-38` (AOSP alone does). But the
+`getDeviceConnectionState() undeclared device, type 00000004, address: <empty>` lines are **not**
+explained by AOSP: with an empty address that lookup matches any declared device of the type, and ours
+was declared. Worth confirming which policy-manager library audioserver loads on the A566B.
+
+**Q4 — is connecting a HAL-declared BT-SCO device supported?** Yes. It's exactly the Bluetooth stack's
+path (AudioService → `AudioSystem.setDeviceConnectionState` → APM → mapper → addressless template →
+`connectExternalDevice`). No BT-specific ownership/validation exists in the native path (APM,
+AudioFlinger, libaudiohal); BtHelper is AudioService-only and a direct `AudioSystem` call bypasses it.
+Caller identity only matters at the `MODIFY_AUDIO_SETTINGS` gate.
+
+### Fix (built, commit below): addressless SCO template ports
+`VirtualScoConfiguration.cpp` no longer sets `AudioDeviceAddress::mac` on the two SCO device ports. Keep
+calling `setDeviceConnectionState(AudioDeviceAttributes(ROLE_…, TYPE_BLUETOOTH_SCO,
+"02:56:41:00:00:01"), AVAILABLE, 0)` — the connected device still surfaces at that MAC. Expected on
+device: `AHAL_VirtualScoModule: populateConnectedDevicePort: connecting …` for both roles, return `0`,
+device in `getDevices()`.
+
+**Caveat — module binding.** With no declared port carrying the MAC, APM can't bind the connect to a
+module by address; it creates a dynamic device attached to the **first module that declares
+`OUT/IN_BLUETOOTH_SCO_HEADSET`** (`HwModuleCollection::createDevice` → `getModuleForDeviceType`). The HAL
+connect itself still reaches `virtual` (fan-out), but APM opens outputs/patches on the module the
+device is attached to.
+- If `virtual` is the **only** module declaring BT-SCO types → full fix.
+- If the vendor module declares a SCO port too (likely — the "dead SCO port") and precedes `virtual`,
+  the device binds to the **vendor** module and audio won't reach our socket. Check
+  `dumpsys media.audio_policy` (which modules list `…BLUETOOTH_SCO_HEADSET`, module order) and, after
+  connecting, which module the `02:56:41:00:00:01` device is attached to. In that case Option 2
+  (`TYPE_BUS`, empty connection → auto-attached, per-module) is the cleaner route.
+- Not recommended: keeping a MAC'd port (for binding) **plus** an addressless template. The connect
+  succeeds, but later patch/stream setup resolves the device via `findPort()` by address, which returns
+  the lowest-id match — the never-connected MAC'd port — and is likely to fail.
+
 ## Acceptance
 Identify the exact `-38` branch and a change (HAL config, module, or the connect-call shape) that makes
 APM **reach `connectExternalDevice` on the `virtual` module** and surface the device in

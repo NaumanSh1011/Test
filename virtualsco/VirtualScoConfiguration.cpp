@@ -49,10 +49,6 @@ using Configuration = aidl::android::hardware::audio::core::Module::Configuratio
 
 namespace aicaller::virtualsco {
 
-// The virtual BT-SCO MAC. StrategyRoutePinner pins by this address (see the legacy HAL / the app's
-// sco/ package); the framework stringifies AudioDeviceAddress::mac as "02:56:41:00:00:01".
-static const std::vector<uint8_t> kScoMac{0x02, 0x56, 0x41, 0x00, 0x00, 0x01};
-
 static AudioProfile createProfile(PcmType pcmType, const std::vector<int32_t>& channelLayouts,
                                   const std::vector<int32_t>& sampleRates) {
     AudioProfile profile;
@@ -66,15 +62,18 @@ static AudioProfile createProfile(PcmType pcmType, const std::vector<int32_t>& c
     return profile;
 }
 
-// BT-SCO device ext carrying the MAC. connection = CONNECTION_BT_SCO maps {OUT_HEADSET|IN_HEADSET}
-// to the legacy AUDIO_DEVICE_*_BLUETOOTH_SCO_HEADSET the pinner expects.
+// BT-SCO template device ext. connection = CONNECTION_BT_SCO maps {OUT_HEADSET|IN_HEADSET} to the
+// legacy AUDIO_DEVICE_*_BLUETOOTH_SCO_HEADSET the pinner expects.
+//
+// No address: this is an external-device TEMPLATE port. On setDeviceConnectionState the framework's
+// Hal2AidlMapper looks the template up with the address reset to empty and an exact AudioDevice
+// match, so a template carrying an address is never found and connectExternalDevice is never called
+// (-38 INVALID_OPERATION, see SETDEVCONN_38_INVESTIGATION.md). The MAC (02:56:41:00:00:01, which
+// StrategyRoutePinner pins by) comes from the connect call and is copied onto the connected port.
 static AudioPortExt createScoDeviceExt(AudioDeviceType devType) {
     AudioPortDeviceExt deviceExt;
     deviceExt.device.type.type = devType;
     deviceExt.device.type.connection = AudioDeviceDescription::CONNECTION_BT_SCO;
-    deviceExt.device.address =
-            aidl::android::media::audio::common::AudioDeviceAddress::make<
-                    aidl::android::media::audio::common::AudioDeviceAddress::mac>(kScoMac);
     deviceExt.flags = 0;
     return AudioPortExt::make<AudioPortExt::Tag::device>(deviceExt);
 }
@@ -109,18 +108,12 @@ std::unique_ptr<Configuration> getVirtualScoConfiguration() {
     const std::vector<AudioProfile> scoProfiles{
             createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_MONO}, {16000})};
 
-    // Device ports (the tap points).
-    //
-    // Set `profiles` ON THE DEVICE PORT (not only connectedProfiles) so each is a PERMANENTLY
-    // ATTACHED device — the AIDL equivalent of the HIDL policy's <attachedDevices>/<defaultOutputDevice>.
-    // A BLUETOOTH_SCO-typed port with only connectedProfiles is treated as a removable/external device
-    // that stays DISCONNECTED until an explicit connect event, so it never appears in
-    // AudioManager.getDevices(); StrategyRoutePinner then finds no SCO output ("no SCO output device in
-    // AudioManager.getDevices"), the SCO pin fails, and the bridge falls back to telephony taps (the
-    // agent plays out the speaker instead of the call uplink). Populating the port's own profiles makes
-    // it always-available. No connectedProfiles entry: that map marks a port as externally
-    // connectable (the HAL only reads it in connectExternalDevice), so the SCO ports are declared
-    // purely as attached devices.
+    // Device ports (the tap points): external BT-SCO TEMPLATE ports (no address, see
+    // createScoDeviceExt). The framework never treats a CONNECTION_BT_SCO port as attached
+    // (AudioPolicyConfig::loadFromAidl only attaches ports with an empty connection), so they only
+    // become available — and appear in AudioManager.getDevices() — once something calls
+    // AudioSystem.setDeviceConnectionState(AVAILABLE) with the MAC; ModuleVirtualSco then accepts
+    // the connect. The static `profiles` on the port are what the connected port inherits.
     AudioPort scoOutDevice =
             createPort(c.nextPortId++, "BT SCO Virtual", false,
                        createScoDeviceExt(AudioDeviceType::OUT_HEADSET));
